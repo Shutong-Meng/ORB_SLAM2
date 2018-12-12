@@ -32,6 +32,7 @@
 #include <message_filters/time_synchronizer.h>
 #include <message_filters/sync_policies/approximate_time.h>
 #include <geometry_msgs/PointStamped.h>
+#include <geometry_msgs/PoseStamped.h>
 #include<opencv2/core/core.hpp>
 
 #include"../../../include/System.h"
@@ -114,7 +115,7 @@ int main(int argc, char **argv)
 
     ros::NodeHandle nh;
     
-    pub_pose = nh.advertise<geometry_msgs::PointStamped>("/Stereo/position", 1000);
+    pub_pose = nh.advertise<geometry_msgs::PoseStamped>("/Stereo/position", 1000);
 
     message_filters::Subscriber<sensor_msgs::Image> left_sub(nh, "/camera/left/image_raw", 1);
     message_filters::Subscriber<sensor_msgs::Image> right_sub(nh, "camera/right/image_raw", 1);
@@ -222,13 +223,17 @@ void ImageGrabber::GrabStereo(const sensor_msgs::ImageConstPtr& msgLeft,const se
     //cout<<globalRotation_rh[0]<<"   "<<globalQ[1]<<"   "<<globalQ[2]<<"   "<<globalQ[3]<<endl;
 
 
-    geometry_msgs::PointStamped cam_pose;
-    cam_pose.header=cv_ptrLeft->header;
+    geometry_msgs::PoseStamped cam_pose;
+    cam_pose.header.stamp=cv_ptrLeft->header.stamp;
+    cam_pose.header.frame_id = "map";
     // translation=pose.rowRange(0,3).col(3).clone();
-    cam_pose.point.x=globalTranslation_rh[0];
-    cam_pose.point.y=globalTranslation_rh[1];
-    cam_pose.point.z=globalTranslation_rh[2];
-    
+    cam_pose.pose.position.x=globalTranslation_rh[0];
+    cam_pose.pose.position.y=globalTranslation_rh[1];
+    cam_pose.pose.position.z=globalTranslation_rh[2];
+    cam_pose.pose.orientation.w=globalQ.w();
+    cam_pose.pose.orientation.x=globalQ.x();
+    cam_pose.pose.orientation.y=globalQ.y();
+    cam_pose.pose.orientation.z=globalQ.z();
     // cam_pose.point.x=globalTranslation_rh[0]+4.78229971748;
     // cam_pose.point.y=globalTranslation_rh[1]-1.81557362771;
     // cam_pose.point.z=globalTranslation_rh[2]+0.844627073703;
