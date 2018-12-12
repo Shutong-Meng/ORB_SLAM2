@@ -18,7 +18,9 @@
 * along with ORB-SLAM2. If not, see <http://www.gnu.org/licenses/>.
 */
 
-
+#include <unistd.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include<iostream>
 #include<algorithm>
 #include<fstream>
@@ -29,12 +31,15 @@
 #include <message_filters/subscriber.h>
 #include <message_filters/time_synchronizer.h>
 #include <message_filters/sync_policies/approximate_time.h>
-
+#include <geometry_msgs/PointStamped.h>
 #include<opencv2/core/core.hpp>
 
 #include"../../../include/System.h"
 
+#include "geometry_msgs/TransformStamped.h"
+#include <tf/transform_broadcaster.h>
 using namespace std;
+ros::Publisher pub_pose;
 
 class ImageGrabber
 {
@@ -108,13 +113,15 @@ int main(int argc, char **argv)
     }
 
     ros::NodeHandle nh;
+    
+    pub_pose = nh.advertise<geometry_msgs::PointStamped>("/Stereo/position", 1000);
 
     message_filters::Subscriber<sensor_msgs::Image> left_sub(nh, "/camera/left/image_raw", 1);
     message_filters::Subscriber<sensor_msgs::Image> right_sub(nh, "camera/right/image_raw", 1);
     typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::Image, sensor_msgs::Image> sync_pol;
     message_filters::Synchronizer<sync_pol> sync(sync_pol(10), left_sub,right_sub);
     sync.registerCallback(boost::bind(&ImageGrabber::GrabStereo,&igb,_1,_2));
-
+    ros::Rate r(20);
     ros::spin();
 
     // Stop all threads
@@ -133,6 +140,8 @@ int main(int argc, char **argv)
 void ImageGrabber::GrabStereo(const sensor_msgs::ImageConstPtr& msgLeft,const sensor_msgs::ImageConstPtr& msgRight)
 {
     // Copy the ros image message to cv::Mat.
+    cv::Mat pose;
+    cv::Mat translation;
     cv_bridge::CvImageConstPtr cv_ptrLeft;
     try
     {
@@ -160,12 +169,85 @@ void ImageGrabber::GrabStereo(const sensor_msgs::ImageConstPtr& msgLeft,const se
         cv::Mat imLeft, imRight;
         cv::remap(cv_ptrLeft->image,imLeft,M1l,M2l,cv::INTER_LINEAR);
         cv::remap(cv_ptrRight->image,imRight,M1r,M2r,cv::INTER_LINEAR);
-        mpSLAM->TrackStereo(imLeft,imRight,cv_ptrLeft->header.stamp.toSec());
+        pose=mpSLAM->TrackStereo(imLeft,imRight,cv_ptrLeft->header.stamp.toSec());
     }
     else
     {
-        mpSLAM->TrackStereo(cv_ptrLeft->image,cv_ptrRight->image,cv_ptrLeft->header.stamp.toSec());
+        pose=mpSLAM->TrackStereo(cv_ptrLeft->image,cv_ptrRight->image,cv_ptrLeft->header.stamp.toSec());
     }
+
+    static cv::Mat pose_prev = cv::Mat::eye(4,4, CV_32F);
+    static cv::Mat world_lh = cv::Mat::eye(4,4, CV_32F);
+    // matrix to flip signs of sinus in rotation matrix, not sure why we need to do that
+    static const cv::Mat flipSign = (cv::Mat_<float>(4,4) <<   1,-1,-1, 1,
+            -1, 1,-1, 1,
+            -1,-1, 1, 1,
+            1, 1, 1, 1);
+
+    //prev_pose * T = pose
+    translation =  (pose * pose_prev.inv()).mul(flipSign);
+    world_lh = world_lh * translation;
+    pose_prev = pose.clone();
+
+
+    /* transform into global right handed coordinate system, publish in ROS*/
+    tf::Matrix3x3 cameraRotation_rh(  - world_lh.at<float>(0,0),   world_lh.at<float>(0,1),   world_lh.at<float>(0,2),
+                                      - world_lh.at<float>(1,0),   world_lh.at<float>(1,1),   world_lh.at<float>(1,2),
+                                      world_lh.at<float>(2,0), - world_lh.at<float>(2,1), - world_lh.at<float>(2,2));
+
+    tf::Vector3 cameraTranslation_rh( world_lh.at<float>(0,3),world_lh.at<float>(1,3), - world_lh.at<float>(2,3) );
+
+    //rotate 270deg about x and 270deg about x to get ENU: x forward, y left, z up
+    const tf::Matrix3x3 rotation270degXZ(   0, 1, 0,
+                                            0, 0, 1,
+                                            1, 0, 0);
+
+    static tf::TransformBroadcaster broadcaster;
+
+
+
+
+    tf::Matrix3x3 globalRotation_rh = cameraRotation_rh * rotation270degXZ;
+    tf::Quaternion q ;
+    globalRotation_rh.getRotation(q);
+    double qNorm  = sqrt( q.x()*q.x()+ q.y()*q.y() + q.z()*q.z() +q.w()*q.w()) ;
+    tf::Quaternion globalQ(q.x()/qNorm , q.y()/qNorm ,q.z()/qNorm ,q.w()/qNorm );
+
+
+
+    tf::Vector3 globalTranslation_rh = cameraTranslation_rh * rotation270degXZ;
+    tf::Transform transform = tf::Transform( globalQ , globalTranslation_rh);
+
+    broadcaster.sendTransform(tf::StampedTransform(transform, ros::Time::now(), "world", "map"));
+    //cout<<globalRotation_rh[0]<<"   "<<globalQ[1]<<"   "<<globalQ[2]<<"   "<<globalQ[3]<<endl;
+
+
+    geometry_msgs::PointStamped cam_pose;
+    cam_pose.header=cv_ptrLeft->header;
+    // translation=pose.rowRange(0,3).col(3).clone();
+    cam_pose.point.x=globalTranslation_rh[0];
+    cam_pose.point.y=globalTranslation_rh[1];
+    cam_pose.point.z=globalTranslation_rh[2];
+    
+    // cam_pose.point.x=globalTranslation_rh[0]+4.78229971748;
+    // cam_pose.point.y=globalTranslation_rh[1]-1.81557362771;
+    // cam_pose.point.z=globalTranslation_rh[2]+0.844627073703;
+    //cout<<cam_pose.point.x<<"   "<<cam_pose.point.y<<"   "<<cam_pose.point.z<<endl;
+    pub_pose.publish(cam_pose);
+
+    //node hasn't publish topic (period)
+    // int q=0;
+    // for(int i=0;i<pose.rows;i++)
+    // {
+    // 	for(int j=0;j<pose.cols;j++)
+    // 	{
+    // 		cout<<pose.at<float>(i,j)<<"  ";
+    // 		q++;
+    // 		if(q%4==0)
+    // 			cout<<endl;
+    // 	}
+    // }
+
 
 }
 

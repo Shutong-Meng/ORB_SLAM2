@@ -21,7 +21,9 @@
 
 #ifndef VIEWERAR_H
 #define VIEWERAR_H
-
+#include <unistd.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <mutex>
 #include <opencv2/core/core.hpp>
 #include <pangolin/pangolin.h>

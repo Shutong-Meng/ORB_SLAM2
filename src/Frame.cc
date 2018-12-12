@@ -17,7 +17,9 @@
 * You should have received a copy of the GNU General Public License
 * along with ORB-SLAM2. If not, see <http://www.gnu.org/licenses/>.
 */
-
+#include <unistd.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include "Frame.h"
 #include "Converter.h"
 #include "ORBmatcher.h"
@@ -260,9 +262,9 @@ void Frame::SetPose(cv::Mat Tcw)
 
 void Frame::UpdatePoseMatrices()
 { 
-    mRcw = mTcw.rowRange(0,3).colRange(0,3);
+    mRcw = mTcw.rowRange(0,3).colRange(0,3); //R
     mRwc = mRcw.t();
-    mtcw = mTcw.rowRange(0,3).col(3);
+    mtcw = mTcw.rowRange(0,3).col(3); //t
     mOw = -mRcw.t()*mtcw;
 }
 

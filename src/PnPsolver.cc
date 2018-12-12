@@ -47,7 +47,9 @@
 * of the authors and should not be interpreted as representing official policies,
 *   either expressed or implied, of the FreeBSD Project
 */
-
+#include <unistd.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <iostream>
 
 #include "PnPsolver.h"
