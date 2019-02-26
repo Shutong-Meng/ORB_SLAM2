@@ -117,8 +117,8 @@ int main(int argc, char **argv)
     
     pub_pose = nh.advertise<geometry_msgs::PoseStamped>("/Stereo/position", 1000);
 
-    message_filters::Subscriber<sensor_msgs::Image> left_sub(nh, "/camera/left/image_raw", 1);
-    message_filters::Subscriber<sensor_msgs::Image> right_sub(nh, "camera/right/image_raw", 1);
+    message_filters::Subscriber<sensor_msgs::Image> left_sub(nh, "/camera/left/image_raw", 1);//"/camera/left/image_raw"
+    message_filters::Subscriber<sensor_msgs::Image> right_sub(nh, "/camera/right/image_raw", 1);///zed/left/image_rect_color
     typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::Image, sensor_msgs::Image> sync_pol;
     message_filters::Synchronizer<sync_pol> sync(sync_pol(10), left_sub,right_sub);
     sync.registerCallback(boost::bind(&ImageGrabber::GrabStereo,&igb,_1,_2));
@@ -185,12 +185,18 @@ void ImageGrabber::GrabStereo(const sensor_msgs::ImageConstPtr& msgLeft,const se
             -1,-1, 1, 1,
             1, 1, 1, 1);
 
+    cv::Mat T0 = ( cv::Mat_<float>(4,4) << 0.0125552670891, -0.999755099723, 0.0182237714554, -0.0198435579556,
+         				0.999598781151, 0.0130119051815, 0.0251588363115, 0.0453689425024,
+        				-0.0253898008918, 0.0179005838253, 0.999517347078, 0.00786212447038,
+        				0.0, 0.0, 0.0, 1.0);
     //prev_pose * T = pose
     translation =  (pose * pose_prev.inv()).mul(flipSign);
     world_lh = world_lh * translation;
     pose_prev = pose.clone();
 
-
+    tf::Matrix3x3 R0(0.0125552670891, -0.999755099723, 0.0182237714554, 
+         				0.999598781151, 0.0130119051815, 0.0251588363115, 
+        				-0.0253898008918, 0.0179005838253, 0.999517347078);
     /* transform into global right handed coordinate system, publish in ROS*/
     tf::Matrix3x3 cameraRotation_rh(  - world_lh.at<float>(0,0),   world_lh.at<float>(0,1),   world_lh.at<float>(0,2),
                                       - world_lh.at<float>(1,0),   world_lh.at<float>(1,1),   world_lh.at<float>(1,2),
@@ -207,8 +213,7 @@ void ImageGrabber::GrabStereo(const sensor_msgs::ImageConstPtr& msgLeft,const se
 
 
 
-
-    tf::Matrix3x3 globalRotation_rh = cameraRotation_rh * rotation270degXZ;
+    tf::Matrix3x3 globalRotation_rh = R0 * cameraRotation_rh * rotation270degXZ;
     tf::Quaternion q ;
     globalRotation_rh.getRotation(q);
     double qNorm  = sqrt( q.x()*q.x()+ q.y()*q.y() + q.z()*q.z() +q.w()*q.w()) ;
@@ -225,7 +230,7 @@ void ImageGrabber::GrabStereo(const sensor_msgs::ImageConstPtr& msgLeft,const se
 
     geometry_msgs::PoseStamped cam_pose;
     cam_pose.header.stamp=cv_ptrLeft->header.stamp;
-    cam_pose.header.frame_id = "map";
+    cam_pose.header.frame_id = "world";
     // translation=pose.rowRange(0,3).col(3).clone();
     cam_pose.pose.position.x=globalTranslation_rh[0];
     cam_pose.pose.position.y=globalTranslation_rh[1];
