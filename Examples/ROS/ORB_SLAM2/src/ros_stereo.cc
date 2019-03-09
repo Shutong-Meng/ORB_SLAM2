@@ -36,7 +36,7 @@
 #include<opencv2/core/core.hpp>
 
 #include"../../../include/System.h"
-
+#include"../../../include/Converter.h"
 #include "geometry_msgs/TransformStamped.h"
 #include <tf/transform_broadcaster.h>
 using namespace std;
@@ -115,7 +115,7 @@ int main(int argc, char **argv)
 
     ros::NodeHandle nh;
     
-    pub_pose = nh.advertise<geometry_msgs::PoseStamped>("/Stereo/position", 1000);
+    pub_pose = nh.advertise<geometry_msgs::PoseStamped>("/Stereo/pose", 1000);
 
     message_filters::Subscriber<sensor_msgs::Image> left_sub(nh, "/camera/left/image_raw", 1);//"/camera/left/image_raw"
     message_filters::Subscriber<sensor_msgs::Image> right_sub(nh, "/camera/right/image_raw", 1);///zed/left/image_rect_color
@@ -185,24 +185,17 @@ void ImageGrabber::GrabStereo(const sensor_msgs::ImageConstPtr& msgLeft,const se
             -1,-1, 1, 1,
             1, 1, 1, 1);
 
-    cv::Mat T0 = ( cv::Mat_<float>(4,4) << 0.0125552670891, -0.999755099723, 0.0182237714554, -0.0198435579556,
-         				0.999598781151, 0.0130119051815, 0.0251588363115, 0.0453689425024,
-        				-0.0253898008918, 0.0179005838253, 0.999517347078, 0.00786212447038,
-        				0.0, 0.0, 0.0, 1.0);
     //prev_pose * T = pose
     translation =  (pose * pose_prev.inv()).mul(flipSign);
     world_lh = world_lh * translation;
     pose_prev = pose.clone();
 
-    tf::Matrix3x3 R0(0.0125552670891, -0.999755099723, 0.0182237714554, 
-         				0.999598781151, 0.0130119051815, 0.0251588363115, 
-        				-0.0253898008918, 0.0179005838253, 0.999517347078);
     /* transform into global right handed coordinate system, publish in ROS*/
     tf::Matrix3x3 cameraRotation_rh(  - world_lh.at<float>(0,0),   world_lh.at<float>(0,1),   world_lh.at<float>(0,2),
                                       - world_lh.at<float>(1,0),   world_lh.at<float>(1,1),   world_lh.at<float>(1,2),
                                       world_lh.at<float>(2,0), - world_lh.at<float>(2,1), - world_lh.at<float>(2,2));
 
-    tf::Vector3 cameraTranslation_rh( world_lh.at<float>(0,3),world_lh.at<float>(1,3), - world_lh.at<float>(2,3) );
+    tf::Vector3 cameraTranslation_rh( world_lh.at<float>(0,3), world_lh.at<float>(1,3), - world_lh.at<float>(2,3) );
 
     //rotate 270deg about x and 270deg about x to get ENU: x forward, y left, z up
     const tf::Matrix3x3 rotation270degXZ(   0, 1, 0,
@@ -213,25 +206,25 @@ void ImageGrabber::GrabStereo(const sensor_msgs::ImageConstPtr& msgLeft,const se
 
 
 
-    tf::Matrix3x3 globalRotation_rh = R0 * cameraRotation_rh * rotation270degXZ;
+    tf::Matrix3x3 globalRotation_rh = cameraRotation_rh * rotation270degXZ;
     tf::Quaternion q ;
     globalRotation_rh.getRotation(q);
-    double qNorm  = sqrt( q.x()*q.x()+ q.y()*q.y() + q.z()*q.z() +q.w()*q.w()) ;
+    //cout<<"q is\n"<<q.x()<<"\n"<<q.y()<<"\n"<<q.z()<<"\n"<<q.w()<<endl;
+    double qNorm  = sqrt( q.x()*q.x()+ q.y()*q.y() + q.z()*q.z() +q.w()*q.w());
     tf::Quaternion globalQ(q.x()/qNorm , q.y()/qNorm ,q.z()/qNorm ,q.w()/qNorm );
 
 
 
-    tf::Vector3 globalTranslation_rh = cameraTranslation_rh * rotation270degXZ;
+    tf::Vector3 globalTranslation_rh = cameraTranslation_rh* rotation270degXZ;
     tf::Transform transform = tf::Transform( globalQ , globalTranslation_rh);
 
-    broadcaster.sendTransform(tf::StampedTransform(transform, ros::Time::now(), "world", "map"));
-    //cout<<globalRotation_rh[0]<<"   "<<globalQ[1]<<"   "<<globalQ[2]<<"   "<<globalQ[3]<<endl;
+    broadcaster.sendTransform(tf::StampedTransform(transform, ros::Time::now(), "map", "odom"));
 
 
     geometry_msgs::PoseStamped cam_pose;
     cam_pose.header.stamp=cv_ptrLeft->header.stamp;
-    cam_pose.header.frame_id = "world";
-    // translation=pose.rowRange(0,3).col(3).clone();
+    cam_pose.header.frame_id = "map";
+    
     cam_pose.pose.position.x=globalTranslation_rh[0];
     cam_pose.pose.position.y=globalTranslation_rh[1];
     cam_pose.pose.position.z=globalTranslation_rh[2];
@@ -239,24 +232,9 @@ void ImageGrabber::GrabStereo(const sensor_msgs::ImageConstPtr& msgLeft,const se
     cam_pose.pose.orientation.x=globalQ.x();
     cam_pose.pose.orientation.y=globalQ.y();
     cam_pose.pose.orientation.z=globalQ.z();
-    // cam_pose.point.x=globalTranslation_rh[0]+4.78229971748;
-    // cam_pose.point.y=globalTranslation_rh[1]-1.81557362771;
-    // cam_pose.point.z=globalTranslation_rh[2]+0.844627073703;
-    //cout<<cam_pose.point.x<<"   "<<cam_pose.point.y<<"   "<<cam_pose.point.z<<endl;
+
     pub_pose.publish(cam_pose);
 
-    //node hasn't publish topic (period)
-    // int q=0;
-    // for(int i=0;i<pose.rows;i++)
-    // {
-    // 	for(int j=0;j<pose.cols;j++)
-    // 	{
-    // 		cout<<pose.at<float>(i,j)<<"  ";
-    // 		q++;
-    // 		if(q%4==0)
-    // 			cout<<endl;
-    // 	}
-    // }
 
 
 }
